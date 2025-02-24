@@ -9,7 +9,7 @@ HEADERS = {"Authorization": f"{token}", "Accept": "application/json"}
 
 # Função para obter todas as coordenações
 def obter_todas_coordenações():
-    url = "https://staging.lizeedu.com.br/api/v2/coordinations/"
+    url = "https://app.lizeedu.com.br/api/v2/coordinations/"
 
     # Parâmetros de consulta
     params = {}

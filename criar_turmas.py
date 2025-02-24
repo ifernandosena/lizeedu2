@@ -175,7 +175,7 @@ def criar_turma(codigo_turma, unidade_codigo):
 
     school_year = datetime.now().year  
 
-    url = "https://staging.lizeedu.com.br/api/v2/classes/"
+    url = "https://app.lizeedu.com.br/api/v2/classes/"
     dados = {
         "name": f"{codigo_turma}",
         "grade": grade_id,

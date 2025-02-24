@@ -9,7 +9,7 @@ HEADERS = {"Authorization": f"{token}", "Accept": "application/json"}
 
 # Função para obter todas as séries
 def obter_todas_series():
-    url = "https://staging.lizeedu.com.br/api/v2/series/"
+    url = "https://app.lizeedu.com.br/api/v2/series/"
 
     # Parâmetros de consulta
     params = {}
