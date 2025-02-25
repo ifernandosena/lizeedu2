@@ -1,11 +1,7 @@
 import os
-from dotenv import load_dotenv
-
-# Carregar variáveis do arquivo .env
-load_dotenv("config.env")
 
 # Token de autenticação para API
-API_TOKEN = os.getenv("API_TOKEN")
+API_TOKEN = "Token 443864674b4a856e86990a6c8b3241d3a08e7d8e"
 
 # Cabeçalhos padrão para requisições HTTP
 HEADERS = {
@@ -16,11 +12,11 @@ HEADERS = {
 
 # Configuração do banco de dados
 DB_CONFIG = {
-    "database": os.getenv("DB_NAME"),
-    "user": os.getenv("DB_USER"),
-    "password": os.getenv("DB_PASSWORD"),
-    "host": os.getenv("DB_HOST"),
-    "port": os.getenv("DB_PORT"),
+    "database": "BOLETOS",
+    "user": "postgres",
+    "password": "teste",
+    "host": "192.168.1.163",
+    "port": "5432"
 }
 
 # Mapeamento de código -> nome da unidade
