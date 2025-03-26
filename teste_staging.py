@@ -3,7 +3,7 @@ import requests
 import psycopg2
 from datetime import datetime
 from psycopg2.extras import execute_batch
-from constantes import HEADERS, DB_CONFIG, CODIGO_PARA_UNIDADE, COORDINATION_IDS
+from constantes2 import HEADERS, DB_CONFIG, CODIGO_PARA_UNIDADE, COORDINATION_IDS
 
 class AlunoProcessor:
     def __init__(self):
@@ -13,10 +13,10 @@ class AlunoProcessor:
     def criar_tabelas(self):
         """Cria tabelas no banco de dados se não existirem"""
         queries = [
-            """CREATE TABLE IF NOT EXISTS alunos_lize (
+            """CREATE TABLE IF NOT EXISTS alunos_lize_teste (
                 id TEXT PRIMARY KEY, nome TEXT, matricula TEXT UNIQUE,
                 email TEXT, classes TEXT[], ativo BOOLEAN DEFAULT TRUE);""",
-            """CREATE TABLE IF NOT EXISTS turmas_lize (
+            """CREATE TABLE IF NOT EXISTS turmas_lize_teste (
                 id TEXT PRIMARY KEY, nome TEXT, coordination TEXT, school_year INTEGER);"""
         ]
         try:
@@ -68,7 +68,7 @@ class AlunoProcessor:
                         dado.get("id"), dado.get("name"), dado.get("enrollment_number"),
                         dado.get("email"), [str(c["id"]) for c in dado.get("classes", [])],
                         dado.get("is_active", True)
-                    ) if tabela == "alunos_lize" else (
+                    ) if tabela == "alunos_lize_teste" else (
                         dado.get("id"), dado.get("name"), 
                         dado.get("coordination"), dado.get("school_year")
                     ) for dado in batch]
@@ -102,14 +102,14 @@ class AlunoProcessor:
     def carregar_caches(self):
         """Carrega caches de alunos e turmas"""
         with psycopg2.connect(**DB_CONFIG) as conexao, conexao.cursor() as cursor:
-            cursor.execute("SELECT matricula, id, nome, email, ativo, classes FROM alunos_lize;")
+            cursor.execute("SELECT matricula, id, nome, email, ativo, classes FROM alunos_lize_teste;")
             self.alunos_cache = {
                 row[0]: {'id': row[1], 'nome': row[2], 'email': row[3], 
                          'ativo': row[4], 'classes': row[5] or []}
                 for row in cursor.fetchall()
             }
             
-            cursor.execute("SELECT nome, coordination, id FROM turmas_lize WHERE school_year = %s;",
+            cursor.execute("SELECT nome, coordination, id FROM turmas_lize_teste WHERE school_year = %s;",
                           (datetime.now().year,))
             self.turmas_cache = {}
             for nome, coordination, id_turma in cursor.fetchall():
@@ -176,14 +176,14 @@ class AlunoProcessor:
     def processar_alunos(self):
         """Processa todos os alunos"""
         print("⏳ Iniciando coleta de dados...")
-        alunos_api = self.obter_dados_api("https://app.lizeedu.com.br/api/v2/students/", "alunos")
+        alunos_api = self.obter_dados_api("https://staging.lizeedu.com.br/api/v2/students/", "alunos")
         turmas_api = self.obter_dados_api(
-            f"https://app.lizeedu.com.br/api/v2/classes/?school_year={datetime.now().year}", "turmas")
+            f"https://staging.lizeedu.com.br/api/v2/classes/?school_year={datetime.now().year}", "turmas")
         
         print("⏳ Persistindo dados da API...")
-        self.persistir_dados_em_lote("alunos_lize", alunos_api, 
+        self.persistir_dados_em_lote("alunos_lize_teste", alunos_api, 
             ["id", "nome", "matricula", "email", "classes", "ativo"], "matricula")
-        self.persistir_dados_em_lote("turmas_lize", turmas_api, 
+        self.persistir_dados_em_lote("turmas_lize_teste", turmas_api, 
             ["id", "nome", "coordination", "school_year"], "id")
         
         print("⏳ Preparando ambiente...")
@@ -207,7 +207,7 @@ class AlunoProcessor:
     def obter_id_aluno_por_matricula(self, matricula):
         try:
             with psycopg2.connect(**DB_CONFIG) as conexao, conexao.cursor() as cursor:
-                cursor.execute("SELECT id FROM alunos_lize WHERE matricula = %s;", (matricula,))
+                cursor.execute("SELECT id FROM alunos_lize_teste WHERE matricula = %s;", (matricula,))
                 return cursor.fetchone()[0] if cursor.rowcount > 0 else None
         except Exception as e:
             print(f"❌ Erro ao buscar ID do aluno: {e}")
@@ -216,7 +216,7 @@ class AlunoProcessor:
     def atualizar_status_aluno_local(self, id_aluno, status, nome_aluno):
         try:
             with psycopg2.connect(**DB_CONFIG) as conexao, conexao.cursor() as cursor:
-                cursor.execute("UPDATE alunos_lize SET ativo = %s WHERE id = %s;", 
+                cursor.execute("UPDATE alunos_lize_teste SET ativo = %s WHERE id = %s;", 
                              (status, id_aluno))
                 conexao.commit()
                 print(f"✅ Status do aluno {nome_aluno} atualizado para {'ativo' if status else 'inativo'}.")
@@ -225,7 +225,7 @@ class AlunoProcessor:
 
     def atualizar_aluno(self, aluno_id, nome, matricula, email):
         """Atualiza os dados de um aluno na API do Lize"""
-        url = f"https://app.lizeedu.com.br/api/v2/students/{aluno_id}/"
+        url = f"https://staging.lizeedu.com.br/api/v2/students/{aluno_id}/"
         data = {"name": nome, "enrollment_number": matricula, "email": email}
         response = requests.put(url, headers=HEADERS, json=data)
         
@@ -241,7 +241,7 @@ class AlunoProcessor:
         turma_nome = next((k[1] for k, v in self.turmas_cache.items() if school_class_id in v), 'Desconhecida')
         
         response = requests.post(
-            f"https://app.lizeedu.com.br/api/v2/students/{student_id}/set_classes/",
+            f"https://staging.lizeedu.com.br/api/v2/students/{student_id}/set_classes/",
             headers=HEADERS, json={"school_classes": [str(school_class_id)]})
         
         if response.status_code == 200:
@@ -250,7 +250,7 @@ class AlunoProcessor:
 
     def desativar_aluno(self, id_aluno, nome_aluno, matricula):
         response = requests.post(
-            f"https://app.lizeedu.com.br/api/v2/students/{id_aluno}/disable/",
+            f"https://staging.lizeedu.com.br/api/v2/students/{id_aluno}/disable/",
             headers=HEADERS, json={})
         
         if response.status_code in [200, 204]:
@@ -263,7 +263,7 @@ class AlunoProcessor:
 
     def ativar_aluno(self, id_aluno, nome_aluno, matricula):
         response = requests.post(
-            f"https://app.lizeedu.com.br/api/v2/students/{id_aluno}/enable/",
+            f"https://staging.lizeedu.com.br/api/v2/students/{id_aluno}/enable/",
             headers=HEADERS, json={})
         
         if response.status_code in [200, 204]:
@@ -276,7 +276,7 @@ class AlunoProcessor:
 
     def inserir_aluno(self, nome, matricula, email):
         response = requests.post(
-            "https://app.lizeedu.com.br/api/v2/students/",
+            "https://staging.lizeedu.com.br/api/v2/students/",
             headers=HEADERS, json={"name": nome, "enrollment_number": matricula, "email": email})
         return response.status_code == 201
 

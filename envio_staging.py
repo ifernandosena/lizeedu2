@@ -1,6 +1,8 @@
+import psutil
 import requests
 import psycopg2
 from datetime import datetime
+from psycopg2.extras import execute_batch, DictCursor
 from constantes2 import HEADERS, DB_CONFIG, CODIGO_PARA_UNIDADE, COORDINATION_IDS
 
 # Função para criar tabelas no banco de dados (se não existirem)
@@ -49,65 +51,120 @@ def obter_dados_api(url, tipo_dado):
     print(f"✅ Total de {tipo_dado} coletados: {len(dados)}")
     return dados
 
-# Função para persistir dados em lote no banco de dados
 def persistir_dados_em_lote(tabela, dados, colunas, conflito):
+    if not dados:
+        return
+    
     try:
+        # Configuração inicial do batch_size com fallback
+        try:
+            batch_size = 1000 if psutil.virtual_memory().percent < 70 else 500
+        except Exception:
+            batch_size = 500  # Fallback se psutil falhar
+        
+        print(f"🔧 Configuração inicial - Batch size: {batch_size} | RAM usada: {psutil.virtual_memory().percent}%")
+
         with psycopg2.connect(**DB_CONFIG) as conexao:
             with conexao.cursor() as cursor:
-                # Preparar os valores para inserção
-                valores = []
-                for dado in dados:
-                    if tabela == "alunos_lize_teste":
-                        # Mapear os campos dos alunos
-                        valor = (
-                            dado.get("id"),
-                            dado.get("name"),
-                            dado.get("enrollment_number"),
-                            dado.get("email"),
-                            [str(c["id"]) for c in dado.get("classes", [])],  # Extrair IDs das classes
-                            True  # Campo "ativo"
-                        )
-                    elif tabela == "turmas_lize_teste":
-                        # Mapear os campos das turmas
-                        valor = (
-                            dado.get("id"),
-                            dado.get("name"),
-                            dado.get("coordination"),
-                            dado.get("school_year")
-                        )
-                    valores.append(valor)
-
-                # Gerar a query dinamicamente
                 placeholders = ", ".join(["%s"] * len(colunas))
+                update_set = ", ".join(f"{coluna} = EXCLUDED.{coluna}" 
+                                     for coluna in colunas if coluna != conflito)
+                
                 query = f"""
                     INSERT INTO {tabela} ({", ".join(colunas)})
                     VALUES ({placeholders})
                     ON CONFLICT ({conflito}) DO UPDATE
-                    SET {", ".join(f"{coluna} = EXCLUDED.{coluna}" for coluna in colunas if coluna != conflito)};
+                    SET {update_set};
                 """
-                # Executar a query em lote
-                cursor.executemany(query, valores)
-                conexao.commit()
-                print(f"✅ Dados persistidos em lote na tabela {tabela}.")
+                
+                for i in range(0, len(dados), batch_size):
+                    # Reavalia o batch_size a cada 5 lotes (opcional)
+                    if i > 0 and i % (5 * batch_size) == 0:
+                        try:
+                            batch_size = 1000 if psutil.virtual_memory().percent < 70 else 500
+                            print(f"🔧 Ajuste dinâmico - Novo batch size: {batch_size} | RAM: {psutil.virtual_memory().percent}%")
+                        except Exception:
+                            pass  # Mantém o batch_size anterior
+                    
+                    batch = dados[i:i + batch_size]
+                    valores = [(
+                        dado.get("id"),
+                        dado.get("name"),
+                        dado.get("enrollment_number"),
+                        dado.get("email"),
+                        [str(c["id"]) for c in dado.get("classes", [])],
+                        dado.get("is_active", True)
+                    ) if tabela == "alunos_lize_teste" else (
+                        dado.get("id"),
+                        dado.get("name"),
+                        dado.get("coordination"),
+                        dado.get("school_year")
+                    ) for dado in batch]
+
+                    execute_batch(cursor, query, valores)
+                    conexao.commit()
+                    print(f"✅ Lote {i//batch_size + 1} persistido - {len(batch)} registros | RAM: {psutil.virtual_memory().percent}%")
+                
+                print(f"✅ Todos os dados persistidos na tabela {tabela}")
     except Exception as e:
         print(f"❌ Erro ao persistir dados em lote: {e}")
+        if 'conexao' in locals():  # Garante que a conexão seja fechada em caso de erro
+            conexao.rollback()
 
 # Função para obter alunos do banco de dados local
 def obter_alunos_banco():
+    """
+    Obtém alunos do banco local em streaming (sem carregar tudo na RAM).
+    Retorna um gerador que produz um aluno por vez.
+    """
+    try:
+        with psycopg2.connect(**DB_CONFIG) as conexao:
+            # Cursor server-side (withhold=True) + itersize para controle de memória
+            with conexao.cursor(name='alunos_stream', withhold=True) as cursor:
+                cursor.itersize = 500  # Buffer interno de 500 registros
+                cursor.execute("""
+                    SELECT unidade, sit, matricula, nome, turma
+                    FROM alunos_25_geral
+                    WHERE turma::NUMERIC >= 11500::NUMERIC
+                    ORDER BY matricula;
+                """)
+                
+                for aluno in cursor:
+                    # Remove espaços e retorna tupla (mais eficiente que lista)
+                    yield (
+                        aluno[0],                   # unidade_cod
+                        aluno[1],                   # sit
+                        aluno[2].strip(),          # matricula
+                        aluno[3].strip(),          # nome
+                        aluno[4].strip()           # turma
+                    )
+    except Exception as e:
+        print(f"❌ Erro ao obter alunos do banco: {e}")
+        yield from ()  # Retorna gerador vazio em caso de erro
+
+def obter_id_aluno_por_matricula(matricula):
+    try:
+        with psycopg2.connect(**DB_CONFIG) as conexao:
+            with conexao.cursor() as cursor:
+                cursor.execute("SELECT id FROM alunos_lize_teste WHERE matricula = %s;", (matricula,))
+                return cursor.fetchone()[0] if cursor.rowcount > 0 else None
+    except Exception as e:
+        print(f"❌ Erro ao buscar ID do aluno: {e}")
+        return None
+
+def aluno_tem_turma(aluno_id, turma_id):
     try:
         with psycopg2.connect(**DB_CONFIG) as conexao:
             with conexao.cursor() as cursor:
                 cursor.execute("""
-                SELECT unidade, sit, matricula, nome, turma
-                FROM alunos_25_geral
-                WHERE turma::NUMERIC >= 11500::NUMERIC LIMIT 5;
-                """)
-                alunos = cursor.fetchall()
-                print(f"✅ Total de alunos coletados do banco: {len(alunos)}")
-                return alunos
+                    SELECT classes FROM alunos_lize_teste 
+                    WHERE id = %s;
+                """, (aluno_id,))
+                result = cursor.fetchone()
+                return result and turma_id in result[0]
     except Exception as e:
-        print(f"❌ Erro ao conectar ao banco: {e}")
-        return []
+        print(f"❌ Erro ao verificar turma do aluno: {e}")
+        return False
 
 # Função para definir a etapa de ensino com base no código da turma
 def definir_etapa_ensino(codigo_turma):
@@ -121,125 +178,171 @@ def definir_etapa_ensino(codigo_turma):
     return None
 
 def processar_alunos():
-    # Persistir dados da API localmente
+    # 1. Fase de coleta de dados
+    print("⏳ Iniciando coleta de dados...")
+    
+    # 1.1. Coletar dados da API
     alunos_api = obter_dados_api("https://staging.lizeedu.com.br/api/v2/students/", "alunos")
     turmas_api = obter_dados_api(f"https://staging.lizeedu.com.br/api/v2/classes/?school_year={datetime.now().year}", "turmas")
-    # Persistir alunos
-    persistir_dados_em_lote("alunos_lize_teste", alunos_api, ["id", "nome", "matricula", "email", "classes", "ativo"], "matricula")
-    # Persistir turmas
-    persistir_dados_em_lote("turmas_lize_teste", turmas_api, ["id", "nome", "coordination", "school_year"], "id")
-
-    # Obter alunos do banco de dados local (limitado a 5 alunos)
+    
+    # 1.2. Persistência otimizada em lote
+    print("⏳ Persistindo dados da API...")
+    persistir_dados_em_lote("alunos_lize_teste", alunos_api, 
+                          ["id", "nome", "matricula", "email", "classes", "ativo"], "matricula")
+    persistir_dados_em_lote("turmas_lize_teste", turmas_api, 
+                          ["id", "nome", "coordination", "school_year"], "id")
+    
+    # 2. Fase de preparação
+    print("⏳ Preparando ambiente para processamento...")
+    
+    # 2.1. Obter alunos do banco local com tratamento de duplicados
     alunos_banco = obter_alunos_banco()
+    if not alunos_banco:
+        print("❌ Nenhum aluno encontrado no banco local.")
+        return
+    
+    # Pré-filtro de duplicados
+    matriculas_unicas = set()
+    alunos_para_processar = []
+    
+    for aluno in alunos_banco:
+        matricula = aluno[2]
+        if matricula not in matriculas_unicas:
+            matriculas_unicas.add(matricula)
+            alunos_para_processar.append(aluno)
+        
+    # 2.2. Carregar caches otimizados
+    with psycopg2.connect(**DB_CONFIG) as conexao:
+        with conexao.cursor() as cursor:
+            # Cache de alunos
+            cursor.execute("""
+                SELECT matricula, id, nome, email, ativo, classes 
+                FROM alunos_lize_teste;
+            """)
+            alunos_cache = {
+                row[0]: {
+                    'id': row[1],
+                    'nome': row[2],
+                    'email': row[3],
+                    'ativo': row[4],
+                    'classes': row[5] or []
+                } for row in cursor.fetchall()
+            }
+            
+            # Cache de turmas
+            cursor.execute("""
+                SELECT nome, coordination, id 
+                FROM turmas_lize_teste 
+                WHERE school_year = %s;
+            """, (datetime.now().year,))
+            turmas_cache = {}
+            for nome, coordination, id_turma in cursor.fetchall():
+                turmas_cache.setdefault((coordination, nome), []).append(id_turma)
+    
+    # 3. Fase de processamento principal
+    print(f"⏳ Processando {len(alunos_para_processar)} alunos...")
+    contador = 0
+    tempo_inicio = datetime.now()
+    matriculas_processadas = set()  # Novo: rastreia matrículas já processadas
 
-    # Cache para rastrear matrículas já processadas
-    matriculas_processadas = set()
+    for unidade_cod, sit, matricula, nome, turma in alunos_para_processar:
+        # Verificação e correção de duplicatas
+        if matricula in matriculas_processadas:
+            aluno_info = alunos_cache.get(matricula)
+            if aluno_info and aluno_info['ativo']:
+                if desativar_aluno(aluno_info['id'], nome, matricula):
+                    alunos_cache[matricula]['ativo'] = False
+            continue  # Pula para o próximo aluno
 
-    for unidade_cod, sit, matricula, nome, turma in alunos_banco:
+        matriculas_processadas.add(matricula)  # Registra matrícula
+        contador += 1
         turma = turma.strip()
+        
+        # 3.1. Validações iniciais
         unidade_nome = CODIGO_PARA_UNIDADE.get(unidade_cod)
-
         if not unidade_nome:
-            print(f"❌ Código da unidade '{unidade_cod}' não encontrado.")
             continue
-
+            
         etapa_ensino = definir_etapa_ensino(turma)
         if not etapa_ensino:
-            print(f"❌ Não foi possível determinar a etapa de ensino para a turma {turma}.")
             continue
-
-        coordination_ids = COORDINATION_IDS.get(unidade_nome)
-        coordination_id = coordination_ids.get(etapa_ensino) if coordination_ids else None
-
+            
+        coordination_id = COORDINATION_IDS.get(unidade_nome, {}).get(etapa_ensino)
         if not coordination_id:
-            print(f"❌ Coordination ID não encontrado para {etapa_ensino} na unidade {unidade_nome}.")
             continue
-
-        # Verificar se o aluno já existe na API (usando o banco de dados local)
-        try:
-            with psycopg2.connect(**DB_CONFIG) as conexao:
-                with conexao.cursor() as cursor:
-                    cursor.execute("SELECT id, nome, email, classes, ativo FROM alunos_lize_teste WHERE matricula = %s;", (matricula,))
-                    aluno_api = cursor.fetchone()
-        except Exception as e:
-            print(f"❌ Erro ao buscar aluno no banco de dados local: {e}")
+        
+        # 3.2. Gerenciamento de status
+        aluno_info = alunos_cache.get(matricula)
+        situacao_aluno = int(sit)
+        
+        if situacao_aluno in [2, 4]:  # Aluno deve estar INATIVO
+            if aluno_info and aluno_info['ativo']:
+                if desativar_aluno(aluno_info['id'], nome, matricula):
+                    alunos_cache[matricula]['ativo'] = False
             continue
-
-        # Verificar se a matrícula já foi processada
-        if matricula in matriculas_processadas:
-            print(f"⚠️ Matrícula duplicada encontrada: {matricula} (Aluno: {nome})")
-            if aluno_api:
-                if aluno_api[4]:  # Verificar se o aluno está ativo
-                    desativar_aluno(aluno_api[0], nome)
-                    print(f"❌ Aluno {nome} desativado por ser duplicado.")
-            continue  # Pular para o próximo aluno após desativação
-
-        # Registrar a matrícula como processada
-        matriculas_processadas.add(matricula)
-
-        # Se a situação do aluno for 2 ou 4, desativar na API se ele existir
-        if int(sit) in [2, 4]:  
-            if aluno_api:
-                if aluno_api[4]:  # Verificar se o aluno está ativo
-                    desativar_aluno(aluno_api[0], nome)
-                    print(f"❌ Aluno {nome} desativado devido à situação {sit}.")
-            else:
-                print(f"❌ Aluno {nome} não encontrado na API para desativação.")
-            continue  # Pular para o próximo aluno após desativação
-
-        # Se o aluno não existe no banco local, insira-o
-        if not aluno_api:
-            email_gerado = f"{matricula}@alunos.smrede.com.br"
+        else:  # Aluno deve estar ATIVO
+            if aluno_info and not aluno_info['ativo']:
+                if ativar_aluno(aluno_info['id'], nome, matricula):
+                    alunos_cache[matricula]['ativo'] = True
+        
+        # 3.3. Inserção/Atualização do aluno
+        email_gerado = f"{matricula}@alunos.smrede.com.br"
+        if not aluno_info:
             if inserir_aluno(nome, matricula, email_gerado):
-                print(f"✅ Aluno {nome} inserido na API.")
-                # Após inserir, buscar o aluno novamente para obter o ID
-                try:
-                    with psycopg2.connect(**DB_CONFIG) as conexao:
-                        with conexao.cursor() as cursor:
-                            cursor.execute("SELECT id, classes FROM alunos_lize_teste WHERE matricula = %s;", (matricula,))
-                            aluno_api = cursor.fetchone()
-                except Exception as e:
-                    print(f"❌ Erro ao buscar aluno no banco de dados local: {e}")
-                    continue
+                aluno_id = obter_id_aluno_por_matricula(matricula)
+                if aluno_id:
+                    alunos_cache[matricula] = {
+                        'id': aluno_id,
+                        'nome': nome,
+                        'email': email_gerado,
+                        'ativo': True,
+                        'classes': []
+                    }
         else:
-            # Se o aluno já existe, verifique se precisa ser atualizado
-            email_gerado = f"{matricula}@alunos.smrede.com.br"
-            if aluno_api[1] != nome or aluno_api[2] != email_gerado:
-                if atualizar_aluno(aluno_api[0], nome, matricula, email_gerado):
-                    print(f"🔄 Aluno {nome} atualizado na API.")
-            else:
-                print(f"✅ Aluno {nome} já está atualizado na API.")
+            if aluno_info['nome'] != nome or aluno_info['email'] != email_gerado:
+                if atualizar_aluno(aluno_info['id'], nome, matricula, email_gerado):
+                    alunos_cache[matricula].update({
+                        'nome': nome,
+                        'email': email_gerado
+                    })
+        
+        # 3.4. Associação à turma
+        if matricula in alunos_cache and alunos_cache[matricula]['ativo']:
+            aluno_id = alunos_cache[matricula]['id']
+            turma_key = (coordination_id, turma)
+            
+            if turma_key in turmas_cache:
+                for turma_id in turmas_cache[turma_key]:
+                    if turma_id not in alunos_cache[matricula]['classes']:
+                        if associar_aluno_turma(aluno_id, turma_id):
+                            alunos_cache[matricula]['classes'].append(turma_id)
+        
+        # Log de progresso
+        if contador % 1000 == 0:
+            tempo_decorrido = (datetime.now() - tempo_inicio).total_seconds()
+            velocidade = contador / tempo_decorrido if tempo_decorrido > 0 else 0
+            print(f"↳ Progresso: {contador}/{len(alunos_para_processar)} | Velocidade: {velocidade:.2f} alunos/seg")
+    
+    # 4. Relatório final
+    tempo_total = (datetime.now() - tempo_inicio).total_seconds()
+    print(f"\n✅ Processamento concluído!\n"
+          f"• Alunos processados: {contador}\n"
+          f"• Tempo total: {int(tempo_total // 60)}m {int(tempo_total % 60)}s\n"
+          f"• Velocidade média: {contador/max(1, tempo_total):.2f} alunos/seg")
 
-        # Associar aluno à turma (após inserção/atualização)
-        if aluno_api:
-            try:
-                with psycopg2.connect(**DB_CONFIG) as conexao:
-                    with conexao.cursor() as cursor:
-                        cursor.execute("""
-                            SELECT t.id AS turma_id, a.classes AS turmas_aluno
-                            FROM turmas_lize_teste t
-                            LEFT JOIN alunos_lize_teste a ON a.id = %s
-                            WHERE t.coordination = %s AND t.nome = %s;
-                        """, (aluno_api[0], coordination_id, turma))
-
-                        resultado = cursor.fetchone()
-
-                        if resultado:
-                            turma_id, turmas_aluno = resultado
-
-                            # Verifica se o aluno já está na turma correta
-                            if turmas_aluno and turma_id in turmas_aluno:
-                                print(f"✅ Aluno {nome} já está na turma correta ({turma}) na unidade {unidade_nome}.")
-                            else:
-                                # Associar o aluno à turma correta
-                                if associar_aluno_turma(aluno_api[0], turma_id):
-                                    print(f"🎓 Aluno {nome} associado à turma {turma} na unidade {unidade_nome}.")
-                                else:
-                                    print(f"❌ Erro ao associar aluno {nome} à turma {turma} na unidade {unidade_nome}.")
-                        else:
-                            print(f"❌ Turma '{turma}' não encontrada para a coordenação {coordination_id}.")
-            except Exception as e:
-                print(f"❌ Erro ao buscar turma no banco de dados local: {e}")
+def atualizar_status_aluno_local(id_aluno, status):
+    try:
+        with psycopg2.connect(**DB_CONFIG) as conexao:
+            with conexao.cursor() as cursor:
+                cursor.execute("""
+                    UPDATE alunos_lize_teste 
+                    SET ativo = %s 
+                    WHERE id = %s;
+                """, (status, id_aluno))
+                conexao.commit()
+                print(f"✅ Status do aluno (ID: {id_aluno}) atualizado para {'ativo' if status else 'inativo'}.")
+    except Exception as e:
+        print(f"❌ Erro ao atualizar status do aluno no banco local: {e}")
 
 # Funções da API (mantidas conforme o original)
 def associar_aluno_turma(student_id, school_class_id):
@@ -257,10 +360,24 @@ def atualizar_aluno(aluno_id, nome, matricula, email):
 def desativar_aluno(id_aluno, nome_aluno):
     url = f"https://staging.lizeedu.com.br/api/v2/students/{id_aluno}/disable/"
     response = requests.post(url, headers=HEADERS, json={})
-    if response.status_code == 200 or response.status_code == 204:
+    if response.status_code in [200, 204]:
         print(f"❌ Aluno {nome_aluno} desativado com sucesso!")
+        atualizar_status_aluno_local(id_aluno, False)  # Atualiza o banco local
+        return True
     else:
         print(f"❌ Erro ao desativar aluno {nome_aluno}: {response.status_code}")
+        return False
+
+def ativar_aluno(id_aluno, nome_aluno):
+    url = f"https://staging.lizeedu.com.br/api/v2/students/{id_aluno}/enable/"
+    response = requests.post(url, headers=HEADERS, json={})
+    if response.status_code in [200, 204]:
+        print(f"✅ Aluno {nome_aluno} ativado com sucesso!")
+        atualizar_status_aluno_local(id_aluno, True)  # Atualiza o banco local
+        return True
+    else:
+        print(f"❌ Erro ao ativar aluno {nome_aluno}: {response.status_code}")
+        return False
 
 def inserir_aluno(nome, matricula, email):
     url = "https://staging.lizeedu.com.br/api/v2/students/"
