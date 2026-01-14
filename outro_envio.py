@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 import requests
 import psycopg2  # Biblioteca para PostgreSQL
+from constantes import TABELA_ALUNOS_GERAL
 
 # Carregar variáveis do arquivo .env
 load_dotenv("config.env")
@@ -173,9 +174,9 @@ codigo_para_unidade = {
 def processar_alunos():
     conn = psycopg2.connect(**db_config)
     cursor = conn.cursor()
-    cursor.execute(""" 
+    cursor.execute(f""" 
         SELECT unidade, sit, matricula, nome, turma 
-        FROM alunos_25_geral 
+        FROM {TABELA_ALUNOS_GERAL} 
         WHERE turma::NUMERIC >= 11900::NUMERIC
     """)
     alunos = cursor.fetchall()

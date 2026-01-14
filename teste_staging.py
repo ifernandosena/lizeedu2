@@ -3,7 +3,7 @@ import requests
 import psycopg2
 from datetime import datetime
 from psycopg2.extras import execute_batch
-from constantes2 import HEADERS, DB_CONFIG, CODIGO_PARA_UNIDADE, COORDINATION_IDS
+from constantes2 import HEADERS, DB_CONFIG, CODIGO_PARA_UNIDADE, COORDINATION_IDS, TABELA_ALUNOS_GERAL
 
 class AlunoProcessor:
     def __init__(self):
@@ -88,8 +88,8 @@ class AlunoProcessor:
             with psycopg2.connect(**DB_CONFIG) as conexao:
                 with conexao.cursor(name='alunos_stream', withhold=True) as cursor:
                     cursor.itersize = 500
-                    cursor.execute("""
-                        SELECT unidade, sit, matricula, nome, turma FROM alunos_25_geral
+                    cursor.execute(f"""
+                        SELECT unidade, sit, matricula, nome, turma FROM {TABELA_ALUNOS_GERAL}
                         WHERE turma::NUMERIC >= 11500::NUMERIC ORDER BY matricula;
                     """)
                     for aluno in cursor:

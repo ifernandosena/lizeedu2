@@ -3,7 +3,7 @@ import requests
 import psycopg2
 from datetime import datetime
 from psycopg2.extras import execute_batch, DictCursor
-from constantes2 import HEADERS, DB_CONFIG, CODIGO_PARA_UNIDADE, COORDINATION_IDS
+from constantes2 import HEADERS, DB_CONFIG, CODIGO_PARA_UNIDADE, COORDINATION_IDS, TABELA_ALUNOS_GERAL, ANO_LETIVO_ATUAL
 
 # Função para criar tabelas no banco de dados (se não existirem)
 def criar_tabelas():
@@ -17,7 +17,9 @@ def criar_tabelas():
                     matricula TEXT UNIQUE,
                     email TEXT,
                     classes TEXT[],
-                    ativo BOOLEAN DEFAULT TRUE
+                    ativo BOOLEAN DEFAULT TRUE,
+                    ano_letivo INTEGER,
+                    PRIMARY KEY (matricula, ano_letivo) -- Permite o mesmo aluno em anos diferentes
                 );
                 """)
                 cursor.execute("""
@@ -93,7 +95,8 @@ def persistir_dados_em_lote(tabela, dados, colunas, conflito):
                         dado.get("enrollment_number"),
                         dado.get("email"),
                         [str(c["id"]) for c in dado.get("classes", [])],
-                        dado.get("is_active", True)
+                        dado.get("is_active", True),
+                        ANO_LETIVO_ATUAL
                     ) if tabela == "alunos_lize_teste" else (
                         dado.get("id"),
                         dado.get("name"),
@@ -122,13 +125,13 @@ def obter_alunos_banco():
             # Cursor server-side (withhold=True) + itersize para controle de memória
             with conexao.cursor(name='alunos_stream', withhold=True) as cursor:
                 cursor.itersize = 500  # Buffer interno de 500 registros
-                cursor.execute("""
+                cursor.execute(f"""
                     SELECT unidade, sit, matricula, nome, turma
-                    FROM alunos_25_geral
+                    FROM {TABELA_ALUNOS_GERAL}
                     WHERE turma::NUMERIC >= 11500::NUMERIC
                     ORDER BY matricula;
                 """)
-                
+             
                 for aluno in cursor:
                     # Remove espaços e retorna tupla (mais eficiente que lista)
                     yield (
@@ -138,7 +141,7 @@ def obter_alunos_banco():
                         aluno[3].strip(),          # nome
                         aluno[4].strip()           # turma
                     )
-    except Exception as e:
+    except Exception as e:  
         print(f"❌ Erro ao obter alunos do banco: {e}")
         yield from ()  # Retorna gerador vazio em caso de erro
 

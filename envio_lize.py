@@ -3,7 +3,7 @@ import requests
 import psycopg2
 from datetime import datetime
 from psycopg2.extras import execute_batch
-from constantes import HEADERS, DB_CONFIG, CODIGO_PARA_UNIDADE, COORDINATION_IDS
+from constantes import HEADERS, DB_CONFIG, CODIGO_PARA_UNIDADE, COORDINATION_IDS, TABELA_ALUNOS_GERAL, ANO_LETIVO_ATUAL
 
 class AlunoProcessor:
     def __init__(self):
@@ -14,8 +14,15 @@ class AlunoProcessor:
         """Cria tabelas no banco de dados se não existirem"""
         queries = [
             """CREATE TABLE IF NOT EXISTS alunos_lize (
-                id TEXT PRIMARY KEY, nome TEXT, matricula TEXT UNIQUE,
-                email TEXT, classes TEXT[], ativo BOOLEAN DEFAULT TRUE);""",
+                id TEXT, 
+                nome TEXT, 
+                matricula TEXT, 
+                email TEXT, 
+                classes TEXT[], 
+                ativo BOOLEAN DEFAULT TRUE,
+                ano_letivo INTEGER,
+                PRIMARY KEY (matricula, ano_letivo) -- Permite o mesmo aluno em anos diferentes
+            );""",
             """CREATE TABLE IF NOT EXISTS turmas_lize (
                 id TEXT PRIMARY KEY, nome TEXT, coordination TEXT, school_year INTEGER);"""
         ]
@@ -67,7 +74,8 @@ class AlunoProcessor:
                     valores = [(
                         dado.get("id"), dado.get("name"), dado.get("enrollment_number"),
                         dado.get("email"), [str(c["id"]) for c in dado.get("classes", [])],
-                        dado.get("is_active", True)
+                        dado.get("is_active", True),
+                        ANO_LETIVO_ATUAL
                     ) if tabela == "alunos_lize" else (
                         dado.get("id"), dado.get("name"), 
                         dado.get("coordination"), dado.get("school_year")
@@ -88,8 +96,8 @@ class AlunoProcessor:
             with psycopg2.connect(**DB_CONFIG) as conexao:
                 with conexao.cursor(name='alunos_stream', withhold=True) as cursor:
                     cursor.itersize = 500
-                    cursor.execute("""
-                        SELECT unidade, sit, matricula, nome, turma FROM alunos_25_geral
+                    cursor.execute(f"""
+                        SELECT unidade, sit, matricula, nome, turma FROM {TABELA_ALUNOS_GERAL}
                         WHERE turma::NUMERIC >= 11500::NUMERIC ORDER BY matricula;
                     """)
                     for aluno in cursor:
@@ -102,7 +110,7 @@ class AlunoProcessor:
     def carregar_caches(self):
         """Carrega caches de alunos e turmas"""
         with psycopg2.connect(**DB_CONFIG) as conexao, conexao.cursor() as cursor:
-            cursor.execute("SELECT matricula, id, nome, email, ativo, classes FROM alunos_lize;")
+            cursor.execute("SELECT matricula, id, nome, email, ativo, classes FROM alunos_lize WHERE ano_letivo = %s;", (ANO_LETIVO_ATUAL,))
             self.alunos_cache = {
                 row[0]: {'id': row[1], 'nome': row[2], 'email': row[3], 
                          'ativo': row[4], 'classes': row[5] or []}
@@ -245,7 +253,7 @@ class AlunoProcessor:
             headers=HEADERS, json={"school_classes": [str(school_class_id)]})
         
         if response.status_code == 200:
-            print(f"✅ Aluno {aluno_nome} associado à turma {turma_nome} com sucesso!")
+            print(f"✅ Aluno {student_id} associado à turma {turma_nome} com sucesso!")
         return response.status_code == 200
 
     def desativar_aluno(self, id_aluno, nome_aluno, matricula):

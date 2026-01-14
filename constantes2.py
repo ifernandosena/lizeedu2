@@ -1,6 +1,17 @@
 import os
 from dotenv import load_dotenv
 
+from datetime import datetime
+
+# Define o ano letivo atual dinamicamente
+ANO_LETIVO_ATUAL = datetime.now().year
+# Se o script rodar no final de 2025 já preparando 2026, você pode ajustar a lógica
+# ANO_LETIVO_ATUAL = 2026 
+
+# Nome da tabela de origem centralizado
+TABELA_ALUNOS_GERAL = f"alunos_{str(ANO_LETIVO_ATUAL)[2:]}_geral" 
+# Resultado: "alunos_26_geral" em 2026
+
 # Carregar variáveis do arquivo .env
 load_dotenv("config2.env")
 

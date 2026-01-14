@@ -3,6 +3,7 @@ import os
 from dotenv import load_dotenv
 import psycopg2
 from datetime import datetime
+from constantes import TABELA_ALUNOS_GERAL
 
 # Carregando variáveis de ambiente
 load_dotenv("config.env")
@@ -137,9 +138,9 @@ def obter_turmas_do_banco():
         port=db_port
     )
     cursor = conexao.cursor()
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT DISTINCT turma, unidade 
-        FROM alunos_25_geral 
+        FROM {TABELA_ALUNOS_GERAL} 
         WHERE turma::NUMERIC >= 11500::NUMERIC
     """)
     turmas = cursor.fetchall()
