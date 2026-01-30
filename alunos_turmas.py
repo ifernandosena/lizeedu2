@@ -1,6 +1,7 @@
 import requests
 import os
 from dotenv import load_dotenv
+from constantes import HEADERS, ANO_LETIVO_ATUAL
 
 # Carregar variáveis de ambiente do arquivo config.env
 load_dotenv("config.env")
@@ -11,7 +12,7 @@ HEADERS = {"Authorization": f"{token}", "Accept": "application/json"}
 
 # Função para obter todas as turmas
 def obter_todas_turmas():
-    url = "https://staging.lizeedu.com.br/api/v2/classes/?school_year=2025"
+    url = f"https://staging.lizeedu.com.br/api/v2/classes/?school_year={ANO_LETIVO_ATUAL}"
     turmas = []
 
     while url:

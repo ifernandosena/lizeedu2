@@ -3,7 +3,7 @@ import os
 from dotenv import load_dotenv
 import psycopg2
 from datetime import datetime
-from constantes import TABELA_ALUNOS_GERAL
+from constantes import TABELA_ALUNOS_GERAL, ANO_LETIVO_ATUAL
 
 # Carregando variáveis de ambiente
 load_dotenv("config.env")
@@ -174,7 +174,7 @@ def criar_turma(codigo_turma, unidade_codigo):
         print(f"❌ Erro ao obter IDs para turma {codigo_turma} na unidade {unidade_nome}")
         return
 
-    school_year = datetime.now().year  
+    school_year = ANO_LETIVO_ATUAL  
 
     url = "https://app.lizeedu.com.br/api/v2/classes/"
     dados = {

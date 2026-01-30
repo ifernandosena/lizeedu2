@@ -1,11 +1,12 @@
 import requests
+from constantes import HEADERS, ANO_LETIVO_ATUAL
 
 # URL base do endpoint
-url = "https://staging.lizeedu.com.br/api/v2/classes/?school_year=2025"
+url = f"https://app.lizeedu.com.br/api/v2/classes/?school_year={ANO_LETIVO_ATUAL}"
 
 # Cabeçalhos com autenticação
 headers = {
-    "Authorization": "Token f138893cee459fc57c263a02a6ac4451f991554f",
+    "Authorization": "Token 443864674b4a856e86990a6c8b3241d3a08e7d8e",
     "accept": "application/json"
 }
 
