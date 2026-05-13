@@ -219,7 +219,7 @@ class LizeManager:
         
         logging.info(f"Fonte da Verdade (Elegíveis): {len(alunos_origem)} alunos encontrados.")
         logging.info(f"Cache Local (alunos_lize): {len(estado_local)} registros.")
-        logging.info("Iniciando motor de diffing paralelo (Turbo 20x)...")
+        logging.info("Iniciando comparação de dados...")
 
         upsert_banco_local = []
         with ThreadPoolExecutor(max_workers=20) as executor:
