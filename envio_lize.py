@@ -128,13 +128,17 @@ class LizeManager:
         if str(aluno_api.get("hash")) != novo_hash:
             id_aluno = aluno_api["id_api"]
             status_acao = "MUDANÇA"
+            
+            if aluno_api["nome"] != nome or aluno_api["email"] != f"{mat}@alunos.smrede.com.br":
+                self.api_update_student(id_aluno, nome, mat, f"{mat}@alunos.smrede.com.br")
+
             if aluno_api["ativo"] != deve_estar_ativo:
                 status_acao = "ATIVAR" if deve_estar_ativo else "DESATIVAR"
                 if deve_estar_ativo: self.api_enable(id_aluno)
                 else: self.api_disable(id_aluno)
             
             if deve_estar_ativo and id_turma_alvo:
-                self.api_set_classes(id_aluno, id_turma_alvo)
+                self.api_set_classes(id_aluno, id_turma_alvo, nome, mat, f"{mat}@alunos.smrede.com.br")
             
             with self.stats_lock:
                 self.stats_trocas[status_acao][sigla] += 1
@@ -204,8 +208,8 @@ class LizeManager:
         
         with psycopg2.connect(**DB_CONFIG) as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT matricula, id, nome, classes, ativo, hash_estado FROM alunos_lize WHERE ano_letivo = %s", (ANO_LETIVO_ATUAL,))
-                estado_local = {str(r[0]).strip(): {"id_api": r[1], "nome": r[2], "classes": r[3] or [], "ativo": r[4], "hash": r[5]} for r in cur.fetchall()}
+                cur.execute("SELECT matricula, id, nome, classes, ativo, hash_estado, email FROM alunos_lize WHERE ano_letivo = %s", (ANO_LETIVO_ATUAL,))
+                estado_local = {str(r[0]).strip(): {"id_api": r[1], "nome": r[2], "classes": r[3] or [], "ativo": r[4], "hash": r[5], "email": r[6]} for r in cur.fetchall()}
                 cur.execute("SELECT coordination, nome, id FROM turmas_lize WHERE school_year = %s", (ANO_LETIVO_ATUAL,))
                 mapa_turmas = {(str(r[0]).strip(), str(r[1]).strip()): r[2] for r in cur.fetchall()}
                 # Filtro na Fonte: Somente alunos elegíveis para a Lize (Turma >= 11500 e Ativos)
@@ -289,12 +293,34 @@ class LizeManager:
             return None
         except Exception: return None
 
-    def api_set_classes(self, id_aluno, id_t):
+    def api_update_student(self, id_aluno, nome, mat, email):
+        try:
+            url = f"https://app.lizeedu.com.br/api/v2/students/{id_aluno}/"
+            res = self.session.put(url, json={"name": nome, "enrollment_number": mat, "email": email}, timeout=15)
+            if res.status_code == 200:
+                return True
+            logging.error(f"Erro ao atualizar aluno {mat}: {res.status_code} - {res.text}")
+            return False
+        except Exception as e:
+            logging.error(f"Excecao ao atualizar aluno {mat}: {e}")
+            return False
+
+    def api_set_classes(self, id_aluno, id_t, nome=None, mat=None, email=None):
         try:
             classes = [str(id_t)] if id_t else []
-            r = self.session.post(f"https://app.lizeedu.com.br/api/v2/students/{id_aluno}/set_classes/", json={"school_classes": classes}, timeout=15)
-            return r.status_code in (200, 201, 204)
-        except Exception: return False
+            payload = {"school_classes": classes}
+            if nome: payload["name"] = nome
+            if mat: payload["enrollment_number"] = mat
+            if email: payload["email"] = email
+            
+            r = self.session.post(f"https://app.lizeedu.com.br/api/v2/students/{id_aluno}/set_classes/", json=payload, timeout=15)
+            if r.status_code in (200, 201, 204):
+                return True
+            logging.error(f"Erro ao set_classes aluno {id_aluno}: {r.status_code} - {r.text}")
+            return False
+        except Exception as e:
+            logging.error(f"Excecao ao set_classes aluno {id_aluno}: {e}")
+            return False
 
     def api_disable(self, id_a):
         try:
