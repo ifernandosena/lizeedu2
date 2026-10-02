@@ -1,4 +1,5 @@
 import os
+from dotenv import load_dotenv
 from datetime import datetime
 
 # Define o ano letivo atual dinamicamente
@@ -10,8 +11,11 @@ ANO_LETIVO_ATUAL = datetime.now().year
 TABELA_ALUNOS_GERAL = f"alunos_{str(ANO_LETIVO_ATUAL)[2:]}_geral" 
 # Resultado: "alunos_26_geral" em 2026
 
+# Carregar variáveis do arquivo .env
+load_dotenv("config.env")
+
 # Token de autenticação para API
-API_TOKEN = "Token 443864674b4a856e86990a6c8b3241d3a08e7d8e"
+API_TOKEN = os.getenv("API_TOKEN")
 
 # Cabeçalhos padrão para requisições HTTP
 HEADERS = {
@@ -22,11 +26,11 @@ HEADERS = {
 
 # Configuração do banco de dados
 DB_CONFIG = {
-    "database": "BOLETOS",
-    "user": "postgres",
-    "password": "teste",
-    "host": "192.168.1.163",
-    "port": "5432"
+    "database": os.getenv("DB_NAME"),
+    "user": os.getenv("DB_USER"),
+    "password": os.getenv("DB_PASSWORD"),
+    "host": os.getenv("DB_HOST"),
+    "port": os.getenv("DB_PORT"),
 }
 
 # Mapeamento de código -> nome da unidade

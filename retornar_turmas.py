@@ -6,7 +6,7 @@ url = f"https://app.lizeedu.com.br/api/v2/classes/?school_year={ANO_LETIVO_ATUAL
 
 # Cabeçalhos com autenticação
 headers = {
-    "Authorization": "Token 443864674b4a856e86990a6c8b3241d3a08e7d8e",
+    "Authorization": HEADERS["Authorization"],
     "accept": "application/json"
 }
 
